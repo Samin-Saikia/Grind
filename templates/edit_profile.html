@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Edit profile — Grind{% endblock %}
+
+{% block content %}
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <h2 class="auth-title">Edit profile</h2>
+    <form method="POST" action="{{ url_for('main.edit_profile') }}" class="auth-form">
+      <div class="form-group">
+        <label for="bio">Bio</label>
+        <textarea id="bio" name="bio" rows="3" maxlength="300"
+                  placeholder="Tell others what you're working toward...">{{ current_user.bio or '' }}</textarea>
+        <span class="form-hint">Max 300 characters.</span>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full">Save</button>
+    </form>
+    <p class="auth-switch"><a href="{{ url_for('main.profile') }}">Back to profile</a></p>
+  </div>
+</div>
+{% endblock %}

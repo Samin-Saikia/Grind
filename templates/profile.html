@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ current_user.username }} — Grind{% endblock %}
+
+{% block content %}
+<div class="profile-layout">
+
+  <!-- Profile header -->
+  <div class="profile-header-card">
+    <div class="profile-avatar">
+      {% if current_user.profile_pic_url %}
+        <img src="{{ current_user.profile_pic_url }}" alt="{{ current_user.username }}">
+      {% else %}
+        <div class="avatar-initials">{{ current_user.username[0].upper() }}</div>
+      {% endif %}
+    </div>
+    <div class="profile-info">
+      <h2 class="profile-username">{{ current_user.username }}</h2>
+      <p class="profile-domain">{{ current_user.domain }}</p>
+      {% if current_user.bio %}
+        <p class="profile-bio">{{ current_user.bio }}</p>
+      {% endif %}
+      <a href="{{ url_for('main.edit_profile') }}" class="btn btn-ghost btn-sm mt-8">Edit profile</a>
+    </div>
+    <div class="profile-stats-row">
+      <div class="pstat">
+        <span class="pstat-val accent">{{ current_user.xp }}</span>
+        <span class="pstat-label">XP</span>
+      </div>
+      <div class="pstat">
+        <span class="pstat-val">{{ current_user.level_from_xp() }}</span>
+        <span class="pstat-label">Level</span>
+      </div>
+      <div class="pstat">
+        <span class="pstat-val">{{ current_user.streak }}</span>
+        <span class="pstat-label">Streak</span>
+      </div>
+      <div class="pstat">
+        <span class="pstat-val">{{ stats.total_done }}</span>
+        <span class="pstat-label">Done</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Task history and XP log side by side -->
+  <div class="profile-body">
+
+    <div class="profile-col">
+      <h3 class="col-title">Task history</h3>
+      {% if all_tasks %}
+        {% for task in all_tasks %}
+        <div class="history-row status-{{ task.status }}">
+          <div class="history-left">
+            <span class="history-status">{{ task.status }}</span>
+            <span class="history-title">{{ task.title }}</span>
+          </div>
+          <span class="history-xp">
+            {% if task.status == 'done' %}+{{ task.xp_value }}{% elif task.status == 'skipped' %}-20{% elif task.status == 'quit' %}-50{% else %}—{% endif %}
+          </span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="empty-text">No tasks yet.</p>
+      {% endif %}
+    </div>
+
+    <div class="profile-col">
+      <h3 class="col-title">XP log</h3>
+      {% if xp_history %}
+        {% for log in xp_history %}
+        <div class="history-row">
+          <span class="history-title">{{ log.reason[:60] }}</span>
+          <span class="history-xp {% if log.delta > 0 %}positive{% else %}negative{% endif %}">
+            {% if log.delta > 0 %}+{% endif %}{{ log.delta }}
+          </span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="empty-text">No XP activity yet.</p>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+{% endblock %}

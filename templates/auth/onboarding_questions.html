@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Tell us about yourself — Grind{% endblock %}
+
+{% block content %}
+<div class="onboard-wrapper">
+  <div class="onboard-step">
+    <div class="step-indicator">
+      <span class="step done">1</span>
+      <span class="step-line filled"></span>
+      <span class="step active">2</span>
+    </div>
+    <h2 class="onboard-title">A few quick questions</h2>
+    <p class="onboard-sub">The AI generated these based on your domain. Answer honestly — this shapes everything.</p>
+
+    <form method="POST" action="{{ url_for('auth.onboarding_questions') }}" class="onboard-form">
+      {% for q in questions %}
+      <div class="form-group question-block">
+        <label for="answer_{{ q.id }}">
+          <span class="q-number">{{ loop.index }}</span>
+          {{ q.question }}
+        </label>
+        <input type="text" id="answer_{{ q.id }}" name="answer_{{ q.id }}"
+               placeholder="Your answer..." required autocomplete="off">
+      </div>
+      {% endfor %}
+
+      <div class="onboard-note">
+        <span class="note-icon">AI</span>
+        Your answers are used to build your personal task profile. No one else sees them.
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-full mt-16" id="submit-btn">
+        Build my profile and generate tasks
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelector('.onboard-form').addEventListener('submit', function() {
+    var btn = document.getElementById('submit-btn');
+    btn.textContent = 'Building your profile...';
+    btn.disabled = true;
+  });
+</script>
+{% endblock %}

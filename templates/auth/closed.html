@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Closed — Grind{% endblock %}
+
+{% block content %}
+<div class="auth-wrapper">
+  <div class="auth-card" style="text-align:center">
+    <div class="empty-icon" style="margin:0 auto 1rem">!</div>
+    {% if reason == "cap" %}
+      <h2 class="auth-title">Registration closed</h2>
+      <p class="auth-sub">This is a private beta. The user limit has been reached. Check back later or contact the admin.</p>
+    {% else %}
+      <h2 class="auth-title">Access restricted</h2>
+      <p class="auth-sub">This app is currently private.</p>
+    {% endif %}
+    <a href="{{ url_for('auth.login') }}" class="btn btn-ghost btn-sm" style="margin-top:1rem">Log in instead</a>
+  </div>
+</div>
+{% endblock %}

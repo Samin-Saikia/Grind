@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Grind{% endblock %}
+
+{% block content %}
+<div class="dashboard-layout">
+
+  <!-- Left: Task queue -->
+  <div class="task-panel">
+    <div class="panel-header">
+      <div>
+        <h2 class="panel-title">Your tasks</h2>
+        <p class="panel-sub">{{ current_user.domain }}</p>
+      </div>
+      <form method="POST" action="{{ url_for('main.generate_new_tasks') }}" style="margin:0">
+        <button type="submit" class="btn btn-ghost btn-sm" title="Generate new tasks">
+          + Generate
+        </button>
+      </form>
+    </div>
+
+    {% if pending_tasks %}
+      <div class="task-list">
+        {% for task in pending_tasks %}
+        <div class="task-card" data-difficulty="{{ task.difficulty }}">
+          <div class="task-header">
+            <div class="task-meta">
+              <span class="difficulty-badge diff-{{ task.difficulty }}">{{ task.difficulty }}</span>
+              <span class="task-time">{{ task.time_estimate }} min</span>
+              <span class="task-xp">+{{ task.xp_value }} XP</span>
+            </div>
+          </div>
+
+          <h3 class="task-title">{{ task.title }}</h3>
+          <p class="task-desc">{{ task.description }}</p>
+
+          <!-- Complete form -->
+          <form method="POST" action="{{ url_for('main.complete_task', task_id=task.id) }}" class="task-complete-form">
+            <input type="text" name="note" placeholder="Write what you did or learned..." class="task-note-input" required>
+            <div class="task-actions">
+              <button type="submit" class="btn btn-success btn-sm">Done</button>
+            </div>
+          </form>
+
+          <div class="task-bail-actions">
+            <form method="POST" action="{{ url_for('main.skip_task', task_id=task.id) }}" style="display:inline">
+              <button type="submit" class="btn btn-ghost btn-xs" onclick="return confirm('Skip this task? You lose 20 XP.')">
+                Skip (-20 XP)
+              </button>
+            </form>
+            <form method="POST" action="{{ url_for('main.quit_task', task_id=task.id) }}" style="display:inline">
+              <button type="submit" class="btn btn-danger-ghost btn-xs" onclick="return confirm('Quit this task? You lose 50 XP.')">
+                Quit (-50 XP)
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-icon">0</div>
+        <p>No pending tasks.</p>
+        <form method="POST" action="{{ url_for('main.generate_new_tasks') }}">
+          <button type="submit" class="btn btn-primary btn-sm">Generate tasks now</button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Right: Stats sidebar -->
+  <div class="stats-panel">
+
+    <!-- XP card -->
+    <div class="stat-card xp-card">
+      <div class="stat-row">
+        <span class="stat-label">Total XP</span>
+        <span class="stat-value accent">{{ current_user.xp }}</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Level</span>
+        <span class="stat-value">{{ current_user.level_from_xp() }}</span>
+      </div>
+      <div class="xp-bar-wrapper">
+        <div class="xp-bar" style="width: {{ current_user.xp_progress_percent() }}%"></div>
+      </div>
+      <div class="xp-label-row">
+        <span class="ts">{{ current_user.xp_progress_percent() }}% to next level</span>
+        <span class="ts">{{ current_user.xp_to_next_level() }} XP needed</span>
+      </div>
+    </div>
+
+    <!-- Streak card -->
+    <div class="stat-card">
+      <div class="stat-row">
+        <span class="stat-label">Streak</span>
+        <span class="stat-value">{{ current_user.streak }} days</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Done today</span>
+        <span class="stat-value">{{ completed_today }}</span>
+      </div>
+    </div>
+
+    <!-- User model insight -->
+    {% if user_model %}
+    <div class="stat-card">
+      <p class="stat-section-label">Your profile</p>
+      <div class="model-row">
+        <span class="model-key">Level</span>
+        <span class="model-val">{{ user_model.get('level_estimate', '—') }}</span>
+      </div>
+      <div class="model-row">
+        <span class="model-key">Target difficulty</span>
+        <span class="model-val">{{ user_model.get('preferred_task_difficulty', '—') }}</span>
+      </div>
+      {% if user_model.get('weak_areas') %}
+      <div class="model-row">
+        <span class="model-key">Weak areas</span>
+        <span class="model-val">{{ user_model.get('weak_areas', [])|join(', ') }}</span>
+      </div>
+      {% endif %}
+      {% if user_model.get('notes') %}
+      <div class="model-note">{{ user_model.get('notes') }}</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Recent XP log -->
+    {% if recent_xp %}
+    <div class="stat-card">
+      <p class="stat-section-label">Recent activity</p>
+      {% for log in recent_xp %}
+      <div class="xp-log-row">
+        <span class="xp-log-reason">{{ log.reason[:50] }}</span>
+        <span class="xp-log-delta {% if log.delta > 0 %}positive{% else %}negative{% endif %}">
+          {% if log.delta > 0 %}+{% endif %}{{ log.delta }}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}
