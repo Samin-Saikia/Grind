@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% block title %} — Grind{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Grind</div>
+    <div class="page-sub">// microtasks calibrated to your level</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span id="session-xp" style="font-family:var(--mono);font-size:12px;color:var(--accent);"></span>
+    <button class="btn btn-ghost btn-sm" onclick="generateTasks()" id="gen-btn">Generate session</button>
+  </div>
+</div>
+
+<div class="page-body">
+  <!-- Loading state -->
+  <div id="loading-state" style="display:none;" class="empty-state">
+    <div class="spinner"></div>
+    <div class="empty-title">GRIND is thinking...</div>
+    <div class="empty-sub">Researching your domains, calibrating difficulty</div>
+  </div>
+
+  <!-- Empty state -->
+  <div id="empty-state" class="empty-state">
+    <div class="empty-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    </div>
+    <div class="empty-title">No active session</div>
+    <div class="empty-sub">Generate a session to get your tasks</div>
+    <button class="btn btn-primary" onclick="generateTasks()" style="margin-top:8px;">Generate tasks</button>
+  </div>
+
+  <!-- Tasks list -->
+  <div id="tasks-container" style="display:none;">
+    <div id="tasks-list" style="display:flex;flex-direction:column;gap:14px;"></div>
+
+    <div id="session-footer" style="display:none;margin-top:32px;">
+      <div class="card-accent">
+        <div class="section-label">Session complete</div>
+        <div id="hook-text" style="font-size:15px;color:var(--text);line-height:1.7;margin-bottom:16px;font-style:italic;"></div>
+        <button class="btn btn-ghost" onclick="generateTasks()">Start new session</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Debrief overlay -->
+  <div id="debrief-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;display:none;align-items:center;justify-content:center;padding:24px;">
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:100%;max-width:620px;padding:32px;max-height:90vh;overflow-y:auto;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--accent);margin-bottom:4px;">DEBRIEF</div>
+      <div id="debrief-task-title" style="font-size:18px;font-weight:700;margin-bottom:24px;"></div>
+      <div id="debrief-questions-wrap"></div>
+      <div style="display:flex;gap:10px;margin-top:8px;">
+        <button class="btn btn-primary" onclick="submitDebrief()">Submit answers</button>
+        <button class="btn btn-ghost" onclick="closeDebrief()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result overlay -->
+  <div id="result-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:200;align-items:center;justify-content:center;padding:24px;">
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:100%;max-width:500px;padding:32px;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--accent);margin-bottom:20px;">DEBRIEF RESULT</div>
+      <div style="display:flex;align-items:center;gap:24px;margin-bottom:20px;">
+        <div class="score-ring">
+          <div class="score-number" id="result-score"></div>
+          <div style="font-size:11px;color:var(--text3);font-family:var(--mono);">/ 10</div>
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:6px;font-family:var(--mono);">XP EARNED</div>
+          <div style="font-size:26px;font-weight:700;color:var(--accent);font-family:var(--mono);" id="result-xp">+0</div>
+        </div>
+      </div>
+      <div class="feedback-box" id="result-feedback"></div>
+      <div id="result-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;"></div>
+      <div id="result-milestone" style="display:none;background:var(--accent-dim);border:1px solid rgba(232,255,74,0.2);border-radius:8px;padding:14px;margin-top:14px;font-size:13px;color:var(--text);line-height:1.6;"></div>
+      <button class="btn btn-primary" onclick="closeResult()" style="margin-top:20px;width:100%;justify-content:center;">Continue</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentSessionId = null;
+let currentTasks = [];
+let debriefTaskId = null;
+let timers = {};
+let sessionXP = 0;
+
+async function loadCurrentTasks() {
+  const res = await fetch('/api/tasks/current');
+  const data = await res.json();
+  if (data.tasks && data.tasks.length > 0) {
+    currentSessionId = data.session_id;
+    currentTasks = data.tasks;
+    renderTasks(data.tasks);
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('tasks-container').style.display = 'block';
+  }
+}
+
+async function generateTasks() {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('tasks-container').style.display = 'none';
+  document.getElementById('loading-state').style.display = 'flex';
+  document.getElementById('gen-btn').disabled = true;
+  sessionXP = 0;
+  updateSessionXP();
+
+  try {
+    const res = await fetch('/api/tasks/generate', { method: 'POST', headers: {'Content-Type':'application/json'} });
+    const data = await res.json();
+    currentSessionId = data.session_id;
+    currentTasks = data.tasks;
+    document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('tasks-container').style.display = 'block';
+    document.getElementById('session-footer').style.display = 'none';
+    renderTasks(data.tasks);
+  } catch(e) {
+    document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('empty-state').style.display = 'flex';
+    alert('Error generating tasks. Check your API keys.');
+  }
+  document.getElementById('gen-btn').disabled = false;
+}
+
+function renderTasks(tasks) {
+  const list = document.getElementById('tasks-list');
+  list.innerHTML = '';
+  tasks.forEach(t => {
+    const div = document.createElement('div');
+    div.className = `task-card ${t.status}`;
+    div.id = `task-${t.id}`;
+    div.setAttribute('data-type', t.task_type);
+    div.innerHTML = taskHTML(t);
+    list.appendChild(div);
+  });
+}
+
+function taskHTML(t) {
+  const typeColors = { learn: '#4a9eff', build: '#e8ff4a', research: '#9b4aff', reflect: '#4affd4' };
+  const statusLabel = { pending: '', in_progress: 'IN PROGRESS', done: 'DONE', skipped: 'SKIPPED' };
+  const isDone = t.status === 'done';
+  const isSkipped = t.status === 'skipped';
+  const isActive = t.status === 'in_progress';
+
+  return `
+    <div class="task-header">
+      <div class="task-title">${t.title}</div>
+      <div class="task-meta">
+        <span class="badge badge-type">${t.task_type}</span>
+        <span class="badge badge-diff">D${t.difficulty}/10</span>
+        <span class="badge badge-xp">+${t.xp_value}XP</span>
+        ${isDone ? '<span class="badge badge-done">✓ DONE</span>' : ''}
+        ${isSkipped ? '<span class="badge badge-skip">SKIPPED</span>' : ''}
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <span class="domain-tag">${t.domain}</span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text3);">${t.time_limit_minutes}min</span>
+      ${isActive ? `<span class="timer-display" id="timer-${t.id}">00:00</span>` : ''}
+    </div>
+    <div class="task-desc">${t.description}</div>
+    ${isDone && t.ai_feedback ? `<div class="feedback-box" style="margin-bottom:12px;font-size:13px;">${t.ai_feedback}</div>` : ''}
+    <div class="task-actions">
+      ${!isDone && !isSkipped && !isActive ? `
+        <button class="btn btn-primary btn-sm" onclick="startTask(${t.id})">Start</button>
+        <button class="btn btn-danger btn-sm" onclick="skipTask(${t.id})">Skip</button>
+      ` : ''}
+      ${isActive ? `
+        <button class="btn btn-primary btn-sm" onclick="openDebrief(${t.id})">Mark done + Debrief</button>
+        <button class="btn btn-danger btn-sm" onclick="skipTask(${t.id})">Skip</button>
+      ` : ''}
+    </div>`;
+}
+
+async function startTask(taskId) {
+  await fetch(`/api/tasks/${taskId}/start`, { method: 'POST' });
+  const task = currentTasks.find(t => t.id === taskId);
+  if (task) task.status = 'in_progress';
+  refreshTask(taskId, task);
+  startTimer(taskId, task.time_limit_minutes);
+}
+
+async function skipTask(taskId) {
+  await fetch(`/api/tasks/${taskId}/skip`, { method: 'POST' });
+  const task = currentTasks.find(t => t.id === taskId);
+  if (task) task.status = 'skipped';
+  if (timers[taskId]) { clearInterval(timers[taskId]); delete timers[taskId]; }
+  refreshTask(taskId, task);
+  checkSessionComplete();
+}
+
+function refreshTask(taskId, task) {
+  const el = document.getElementById(`task-${taskId}`);
+  if (!el) return;
+  el.className = `task-card ${task.status}`;
+  el.innerHTML = taskHTML(task);
+  if (task.status === 'in_progress') startTimer(taskId, task.time_limit_minutes);
+}
+
+function startTimer(taskId, limitMins) {
+  const startTime = Date.now();
+  const limitMs = limitMins * 60 * 1000;
+  timers[taskId] = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const mins = Math.floor(elapsed / 60000);
+    const secs = Math.floor((elapsed % 60000) / 1000);
+    const display = document.getElementById(`timer-${taskId}`);
+    if (!display) { clearInterval(timers[taskId]); return; }
+    display.textContent = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+    if (elapsed > limitMs) {
+      display.classList.add('over');
+      display.textContent = '+' + display.textContent;
+    } else if (elapsed > limitMs * 0.8) {
+      display.classList.add('warning');
+    }
+  }, 1000);
+}
+
+async function openDebrief(taskId) {
+  debriefTaskId = taskId;
+  const task = currentTasks.find(t => t.id === taskId);
+  document.getElementById('debrief-task-title').textContent = task.title;
+  document.getElementById('debrief-questions-wrap').innerHTML = '<div class="spinner" style="margin:20px auto;display:block;"></div>';
+
+  const overlay = document.getElementById('debrief-overlay');
+  overlay.style.display = 'flex';
+
+  const res = await fetch(`/api/tasks/${taskId}/debrief/start`, { method: 'POST' });
+  const data = await res.json();
+
+  const wrap = document.getElementById('debrief-questions-wrap');
+  wrap.innerHTML = data.questions.map((q, i) => `
+    <div style="margin-bottom:20px;">
+      <div class="debrief-q">Q${i+1}. ${q}</div>
+      <textarea class="debrief-textarea" id="debrief-ans-${i}" placeholder="Be specific. Don't bullshit it."></textarea>
+    </div>`).join('');
+}
+
+function closeDebrief() {
+  document.getElementById('debrief-overlay').style.display = 'none';
+  debriefTaskId = null;
+}
+
+async function submitDebrief() {
+  if (!debriefTaskId) return;
+  const res = await fetch(`/api/tasks/${debriefTaskId}/debrief/start`, { method: 'POST' });
+  const qdata = await res.json();
+  const answers = qdata.questions.map((_, i) => document.getElementById(`debrief-ans-${i}`)?.value || '');
+
+  if (answers.some(a => a.trim().length < 5)) {
+    alert('Answer all questions before submitting.');
+    return;
+  }
+
+  document.getElementById('debrief-overlay').style.display = 'none';
+
+  const submitRes = await fetch(`/api/tasks/${debriefTaskId}/debrief/submit`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ answers })
+  });
+  const result = await submitRes.json();
+
+  if (timers[debriefTaskId]) { clearInterval(timers[debriefTaskId]); delete timers[debriefTaskId]; }
+
+  const task = currentTasks.find(t => t.id === debriefTaskId);
+  if (task) { task.status = 'done'; task.ai_feedback = result.feedback; }
+  refreshTask(debriefTaskId, task);
+
+  sessionXP += result.xp_earned;
+  updateSessionXP();
+
+  showResult(result);
+  checkSessionComplete();
+  debriefTaskId = null;
+}
+
+function showResult(result) {
+  const score = result.score;
+  const scoreEl = document.getElementById('result-score');
+  scoreEl.textContent = score.toFixed(1);
+  scoreEl.className = 'score-number ' + (score >= 7.5 ? 'high' : score >= 5 ? 'mid' : 'low');
+
+  document.getElementById('result-xp').textContent = `+${result.xp_earned}`;
+  document.getElementById('result-feedback').textContent = result.feedback;
+
+  const tags = document.getElementById('result-tags');
+  tags.innerHTML = [
+    ...result.new_strengths.map(s => `<span class="domain-tag" style="color:var(--teal);border-color:rgba(74,255,212,0.2);">+ ${s}</span>`),
+    ...result.new_weaknesses.map(w => `<span class="domain-tag" style="color:var(--orange);border-color:rgba(255,148,74,0.2);">↓ ${w}</span>`)
+  ].join('');
+
+  const mEl = document.getElementById('result-milestone');
+  if (result.milestone) {
+    mEl.style.display = 'block';
+    mEl.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--accent);margin-bottom:6px;">◆ MILESTONE</div>${result.milestone}`;
+  } else { mEl.style.display = 'none'; }
+
+  document.getElementById('result-overlay').style.display = 'flex';
+}
+
+function closeResult() { document.getElementById('result-overlay').style.display = 'none'; }
+
+function updateSessionXP() {
+  const el = document.getElementById('session-xp');
+  if (el) el.textContent = sessionXP > 0 ? `+${sessionXP} XP this session` : '';
+}
+
+async function checkSessionComplete() {
+  const allDone = currentTasks.every(t => t.status === 'done' || t.status === 'skipped');
+  if (!allDone || !currentSessionId) return;
+
+  const res = await fetch(`/api/session/${currentSessionId}/close`, { method: 'POST' });
+  const data = await res.json();
+
+  const footer = document.getElementById('session-footer');
+  document.getElementById('hook-text').textContent = data.hook;
+  footer.style.display = 'block';
+}
+
+document.addEventListener('DOMContentLoaded', loadCurrentTasks);
+</script>
+{% endblock %}

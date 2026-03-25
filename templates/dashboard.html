@@ -1,145 +1,142 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — Grind{% endblock %}
+{% block title %} — Dashboard{% endblock %}
 
 {% block content %}
-<div class="dashboard-layout">
-
-  <!-- Left: Task queue -->
-  <div class="task-panel">
-    <div class="panel-header">
-      <div>
-        <h2 class="panel-title">Your tasks</h2>
-        <p class="panel-sub">{{ current_user.domain }}</p>
-      </div>
-      <form method="POST" action="{{ url_for('main.generate_new_tasks') }}" style="margin:0">
-        <button type="submit" class="btn btn-ghost btn-sm" title="Generate new tasks">
-          + Generate
-        </button>
-      </form>
-    </div>
-
-    {% if pending_tasks %}
-      <div class="task-list">
-        {% for task in pending_tasks %}
-        <div class="task-card" data-difficulty="{{ task.difficulty }}">
-          <div class="task-header">
-            <div class="task-meta">
-              <span class="difficulty-badge diff-{{ task.difficulty }}">{{ task.difficulty }}</span>
-              <span class="task-time">{{ task.time_estimate }} min</span>
-              <span class="task-xp">+{{ task.xp_value }} XP</span>
-            </div>
-          </div>
-
-          <h3 class="task-title">{{ task.title }}</h3>
-          <p class="task-desc">{{ task.description }}</p>
-
-          <!-- Complete form -->
-          <form method="POST" action="{{ url_for('main.complete_task', task_id=task.id) }}" class="task-complete-form">
-            <input type="text" name="note" placeholder="Write what you did or learned..." class="task-note-input" required>
-            <div class="task-actions">
-              <button type="submit" class="btn btn-success btn-sm">Done</button>
-            </div>
-          </form>
-
-          <div class="task-bail-actions">
-            <form method="POST" action="{{ url_for('main.skip_task', task_id=task.id) }}" style="display:inline">
-              <button type="submit" class="btn btn-ghost btn-xs" onclick="return confirm('Skip this task? You lose 20 XP.')">
-                Skip (-20 XP)
-              </button>
-            </form>
-            <form method="POST" action="{{ url_for('main.quit_task', task_id=task.id) }}" style="display:inline">
-              <button type="submit" class="btn btn-danger-ghost btn-xs" onclick="return confirm('Quit this task? You lose 50 XP.')">
-                Quit (-50 XP)
-              </button>
-            </form>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <div class="empty-state">
-        <div class="empty-icon">0</div>
-        <p>No pending tasks.</p>
-        <form method="POST" action="{{ url_for('main.generate_new_tasks') }}">
-          <button type="submit" class="btn btn-primary btn-sm">Generate tasks now</button>
-        </form>
-      </div>
-    {% endif %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Dashboard</div>
+    <div class="page-sub">// your intelligence at a glance</div>
   </div>
-
-  <!-- Right: Stats sidebar -->
-  <div class="stats-panel">
-
-    <!-- XP card -->
-    <div class="stat-card xp-card">
-      <div class="stat-row">
-        <span class="stat-label">Total XP</span>
-        <span class="stat-value accent">{{ current_user.xp }}</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Level</span>
-        <span class="stat-value">{{ current_user.level_from_xp() }}</span>
-      </div>
-      <div class="xp-bar-wrapper">
-        <div class="xp-bar" style="width: {{ current_user.xp_progress_percent() }}%"></div>
-      </div>
-      <div class="xp-label-row">
-        <span class="ts">{{ current_user.xp_progress_percent() }}% to next level</span>
-        <span class="ts">{{ current_user.xp_to_next_level() }} XP needed</span>
-      </div>
-    </div>
-
-    <!-- Streak card -->
-    <div class="stat-card">
-      <div class="stat-row">
-        <span class="stat-label">Streak</span>
-        <span class="stat-value">{{ current_user.streak }} days</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Done today</span>
-        <span class="stat-value">{{ completed_today }}</span>
-      </div>
-    </div>
-
-    <!-- User model insight -->
-    {% if user_model %}
-    <div class="stat-card">
-      <p class="stat-section-label">Your profile</p>
-      <div class="model-row">
-        <span class="model-key">Level</span>
-        <span class="model-val">{{ user_model.get('level_estimate', '—') }}</span>
-      </div>
-      <div class="model-row">
-        <span class="model-key">Target difficulty</span>
-        <span class="model-val">{{ user_model.get('preferred_task_difficulty', '—') }}</span>
-      </div>
-      {% if user_model.get('weak_areas') %}
-      <div class="model-row">
-        <span class="model-key">Weak areas</span>
-        <span class="model-val">{{ user_model.get('weak_areas', [])|join(', ') }}</span>
-      </div>
-      {% endif %}
-      {% if user_model.get('notes') %}
-      <div class="model-note">{{ user_model.get('notes') }}</div>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    <!-- Recent XP log -->
-    {% if recent_xp %}
-    <div class="stat-card">
-      <p class="stat-section-label">Recent activity</p>
-      {% for log in recent_xp %}
-      <div class="xp-log-row">
-        <span class="xp-log-reason">{{ log.reason[:50] }}</span>
-        <span class="xp-log-delta {% if log.delta > 0 %}positive{% else %}negative{% endif %}">
-          {% if log.delta > 0 %}+{% endif %}{{ log.delta }}
-        </span>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
+  <div style="display:flex;gap:8px;">
+    <a href="/grind" class="btn btn-primary">Start Grinding</a>
   </div>
 </div>
+
+<div class="page-body">
+  <!-- Stats row -->
+  <div class="grid-4" style="margin-bottom:24px;" id="stats-row">
+    <div class="card-sm stat-block">
+      <div class="stat-value" id="stat-level">—</div>
+      <div class="stat-label">Global Level</div>
+    </div>
+    <div class="card-sm stat-block">
+      <div class="stat-value" id="stat-xp">—</div>
+      <div class="stat-label">Total XP</div>
+    </div>
+    <div class="card-sm stat-block">
+      <div class="stat-value" id="stat-streak">—</div>
+      <div class="stat-label">Day Streak</div>
+    </div>
+    <div class="card-sm stat-block">
+      <div class="stat-value" id="stat-qstreak">—</div>
+      <div class="stat-label">Quality Streak</div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="gap:24px;margin-bottom:24px;">
+    <!-- AI observations -->
+    <div class="card">
+      <div class="section-label">What GRIND knows about you</div>
+      <div id="ai-observations" style="font-size:13px;color:var(--text2);line-height:1.7;font-style:italic;">
+        Loading...
+      </div>
+      <div class="divider"></div>
+      <div class="section-label">Strengths</div>
+      <div id="strengths-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;"></div>
+      <div class="section-label">Gaps</div>
+      <div id="weaknesses-list" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    </div>
+
+    <!-- Domain levels -->
+    <div class="card">
+      <div class="section-label">Domain levels</div>
+      <div id="domains-list">
+        <div class="empty-state" style="padding:30px 0;">
+          <div class="empty-title">No domains yet</div>
+          <div class="empty-sub">Start grinding to build domain levels</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent activity + deep dive -->
+  <div class="grid-2" style="gap:24px;">
+    <div class="card">
+      <div class="section-label">Quick Chat</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">Ask GRIND anything — it knows your full profile.</div>
+      <a href="/chat" class="btn btn-ghost" style="width:100%;justify-content:center;">Open Chat</a>
+    </div>
+    <div class="card">
+      <div class="section-label">Deep Dive</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;">Pick any topic. Get a personalized, level-calibrated briefing in minutes.</div>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="dive-input" placeholder="e.g. transformer attention..." style="flex:1;" onkeydown="if(event.key==='Enter')startDive()">
+        <button class="btn btn-primary" onclick="startDive()">Dive</button>
+      </div>
+      <div id="dive-result" style="margin-top:16px;"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadDashboard() {
+  const data = await loadProfile();
+  if (!data) return;
+
+  const p = data.profile;
+  document.getElementById('stat-level').textContent = p.global_level;
+  document.getElementById('stat-xp').textContent = p.total_xp.toLocaleString();
+  document.getElementById('stat-streak').textContent = p.day_streak;
+  document.getElementById('stat-qstreak').textContent = p.quality_streak;
+
+  document.getElementById('ai-observations').textContent = p.ai_observations || 'Still learning you. Keep grinding.';
+
+  const sl = document.getElementById('strengths-list');
+  sl.innerHTML = p.strengths.length ? p.strengths.map(s =>
+    `<span class="domain-tag" style="border-color:rgba(74,255,212,0.2);color:var(--teal);">${s}</span>`).join('') :
+    '<span style="font-size:13px;color:var(--text3);">None identified yet</span>';
+
+  const wl = document.getElementById('weaknesses-list');
+  wl.innerHTML = p.weaknesses.length ? p.weaknesses.map(w =>
+    `<span class="domain-tag" style="border-color:rgba(255,148,74,0.2);color:var(--orange);">${w}</span>`).join('') :
+    '<span style="font-size:13px;color:var(--text3);">None identified yet</span>';
+
+  const dl = document.getElementById('domains-list');
+  if (data.domains.length) {
+    dl.innerHTML = data.domains.map(d => `
+      <div style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:13px;font-weight:600;">${d.domain}</span>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--accent);">Lv.${d.level}</span>
+        </div>
+        <div class="xp-bar-track">
+          <div class="xp-bar-fill" style="width:${Math.min(100,(d.xp/d.xp_to_next)*100)}%"></div>
+        </div>
+        <div class="xp-label"><span>${d.tasks_completed} tasks</span><span>${d.xp}/${d.xp_to_next} XP</span></div>
+      </div>`).join('');
+  }
+}
+
+async function startDive() {
+  const topic = document.getElementById('dive-input').value.trim();
+  if (!topic) return;
+  const res = document.getElementById('dive-result');
+  res.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await fetch('/api/deep-dive', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ topic })
+    });
+    const data = await r.json();
+    res.innerHTML = `<div class="md-content" style="max-height:300px;overflow-y:auto;">${mdToHtml(data.content)}</div>`;
+  } catch(e) {
+    res.innerHTML = '<span style="color:var(--red);font-size:13px;">Error loading deep dive</span>';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadDashboard);
+</script>
 {% endblock %}

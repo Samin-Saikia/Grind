@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %} — Chat{% endblock %}
+
+{% block content %}
+<div class="chat-wrap">
+  <div style="padding:20px 40px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <div style="font-size:18px;font-weight:700;">Chat with GRIND</div>
+      <div style="font-size:12px;color:var(--text3);font-family:var(--mono);">// it knows your full profile · it will challenge you</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
+      <div id="dive-btn-wrap">
+        <button class="btn btn-ghost btn-sm" onclick="toggleDive()">Deep Dive</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deep dive panel -->
+  <div id="dive-panel" style="display:none;padding:12px 40px;border-bottom:1px solid var(--border);background:var(--bg2);">
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span style="font-size:12px;color:var(--text3);font-family:var(--mono);white-space:nowrap;">DEEP DIVE:</span>
+      <input type="text" id="dive-topic" placeholder="Enter topic..." style="flex:1;" onkeydown="if(event.key==='Enter')doDive()">
+      <button class="btn btn-primary btn-sm" onclick="doDive()">Go deep</button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleDive()">✕</button>
+    </div>
+  </div>
+
+  <div class="chat-messages" id="chat-messages">
+    <div class="msg ai">
+      <div class="msg-avatar ai">G</div>
+      <div class="msg-bubble" id="welcome-msg">Loading your profile...</div>
+    </div>
+  </div>
+
+  <div class="chat-input-area">
+    <div class="chat-input-row">
+      <textarea id="chat-input" class="chat-input" rows="1" placeholder="Ask anything. I'll push back if needed."
+        onkeydown="chatKeydown(event)" oninput="autoResize(this)"></textarea>
+      <button class="chat-send" onclick="sendMessage()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;" id="suggestion-chips"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let chatHistory = [];
+let profileData = null;
+
+const suggestions = [
+  "What should I focus on today?",
+  "Quiz me on something I should know",
+  "Where are my biggest gaps right now?",
+  "Challenge me",
+  "What have I been avoiding?",
+];
+
+async function initChat() {
+  const data = await loadProfile();
+  profileData = data;
+
+  // Set welcome message
+  const p = data?.profile;
+  const domains = data?.domains?.map(d => d.domain).join(', ') || 'unknown';
+  const obs = p?.ai_observations;
+  let welcome = obs
+    ? `I know you. ${obs.split('.')[0]}. What are we working on?`
+    : `No profile built yet — start with the Grind page to build your history. For now, ask me anything.`;
+
+  document.getElementById('welcome-msg').textContent = welcome;
+  chatHistory.push({ role: 'assistant', content: welcome });
+
+  // Suggestion chips
+  const chips = document.getElementById('suggestion-chips');
+  chips.innerHTML = suggestions.map(s =>
+    `<button class="btn btn-ghost btn-sm" onclick="useChip('${s}')" style="font-size:11px;">${s}</button>`
+  ).join('');
+}
+
+function useChip(text) {
+  document.getElementById('chat-input').value = text;
+  sendMessage();
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  document.getElementById('suggestion-chips').innerHTML = '';
+
+  appendMsg('user', text);
+  chatHistory.push({ role: 'user', content: text });
+
+  showTyping();
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ message: text, history: chatHistory.slice(-20) })
+    });
+    const data = await res.json();
+    removeTyping();
+    appendMsg('ai', data.reply);
+    chatHistory.push({ role: 'assistant', content: data.reply });
+  } catch(e) {
+    removeTyping();
+    appendMsg('ai', 'Error reaching the server. Check your setup.');
+  }
+}
+
+async function doDive() {
+  const topic = document.getElementById('dive-topic').value.trim();
+  if (!topic) return;
+  toggleDive();
+
+  appendMsg('user', `Deep dive: ${topic}`);
+  showTyping();
+
+  try {
+    const res = await fetch('/api/deep-dive', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ topic })
+    });
+    const data = await res.json();
+    removeTyping();
+    appendMdMsg('ai', data.content);
+    chatHistory.push({ role: 'assistant', content: data.content });
+  } catch(e) {
+    removeTyping();
+    appendMsg('ai', 'Deep dive failed. Check API keys.');
+  }
+}
+
+function appendMsg(role, text) {
+  const wrap = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = `
+    <div class="msg-avatar ${role === 'ai' ? 'ai' : 'user-av'}">${role === 'ai' ? 'G' : 'U'}</div>
+    <div class="msg-bubble">${text.replace(/\n/g,'<br>')}</div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function appendMdMsg(role, text) {
+  const wrap = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = `
+    <div class="msg-avatar ${role === 'ai' ? 'ai' : 'user-av'}">${role === 'ai' ? 'G' : 'U'}</div>
+    <div class="msg-bubble md-content" style="max-width:700px;">${mdToHtml(text)}</div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function showTyping() {
+  const wrap = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ai'; div.id = 'typing-indicator';
+  div.innerHTML = `<div class="msg-avatar ai">G</div><div class="typing"><span></span><span></span><span></span></div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function removeTyping() {
+  const t = document.getElementById('typing-indicator');
+  if (t) t.remove();
+}
+
+function clearChat() {
+  chatHistory = [];
+  const wrap = document.getElementById('chat-messages');
+  wrap.innerHTML = `<div class="msg ai"><div class="msg-avatar ai">G</div><div class="msg-bubble">Chat cleared. What's next?</div></div>`;
+  chatHistory.push({ role: 'assistant', content: 'Chat cleared. What\'s next?' });
+}
+
+function toggleDive() {
+  const panel = document.getElementById('dive-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') document.getElementById('dive-topic').focus();
+}
+
+function chatKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+document.addEventListener('DOMContentLoaded', initChat);
+</script>
+{% endblock %}

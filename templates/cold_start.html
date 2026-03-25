@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRIND — First Session</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+<div class="cold-start-wrap">
+  <div class="cold-start-inner">
+    <div class="cold-start-logo">GRIND — INTELLIGENCE ENGINE</div>
+
+    <div id="intro-screen">
+      <div class="cold-start-title">Let's figure out<br>who you are.</div>
+      <div class="cold-start-sub">// no forms. no categories. just talk.</div>
+      <p style="color:var(--text2);font-size:14px;line-height:1.7;margin-bottom:32px;max-width:480px;">
+        GRIND learns you through conversation. The more you talk, the sharper it gets. 
+        This first session takes about 5–10 minutes. After that, it starts building your profile — automatically, silently, continuously.
+      </p>
+      <button class="btn btn-primary btn-lg" onclick="startColdStart()">Begin</button>
+    </div>
+
+    <div id="chat-screen" style="display:none;">
+      <div class="cold-start-logo" style="margin-bottom:16px;">Session 0 — Cold start</div>
+      <div id="cs-messages" style="min-height:300px;max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:16px;margin-bottom:20px;padding-right:4px;"></div>
+
+      <div id="cs-input-area">
+        <div class="chat-input-row">
+          <textarea id="cs-input" class="chat-input" rows="1" placeholder="Talk to me..." onkeydown="csKeydown(event)"></textarea>
+          <button class="chat-send" onclick="sendCsMessage()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="cs-progress" style="margin-top:16px;">
+        <div class="xp-bar-track"><div class="xp-bar-fill" id="cs-progress-bar" style="width:0%"></div></div>
+        <div class="xp-label"><span>Building your profile...</span><span id="cs-pct">0%</span></div>
+      </div>
+    </div>
+
+    <div id="complete-screen" style="display:none;text-align:center;padding:40px 0;">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--accent);margin-bottom:16px;">PROFILE INITIALIZED</div>
+      <div style="font-size:28px;font-weight:800;margin-bottom:12px;">You're in.</div>
+      <p style="color:var(--text2);font-size:14px;margin-bottom:32px;">GRIND has your first read. It'll keep sharpening every session.</p>
+      <a href="/dashboard" class="btn btn-primary btn-lg">Enter GRIND</a>
+    </div>
+  </div>
+</div>
+
+<script>
+let history = [];
+let turns = 0;
+
+async function startColdStart() {
+  document.getElementById('intro-screen').style.display = 'none';
+  document.getElementById('chat-screen').style.display = 'block';
+  // First AI message
+  await sendInitMessage();
+}
+
+async function sendInitMessage() {
+  showTyping();
+  const res = await fetch('/api/cold-start/chat', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ message: '__init__', history: [] })
+  });
+  const data = await res.json();
+  removeTyping();
+  history = [{ role: 'assistant', content: data.reply }];
+  appendMsg('ai', data.reply);
+}
+
+async function sendCsMessage() {
+  const input = document.getElementById('cs-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  appendMsg('user', text);
+  history.push({ role: 'user', content: text });
+  turns++;
+
+  const pct = Math.min(95, (turns / 6) * 100);
+  document.getElementById('cs-progress-bar').style.width = pct + '%';
+  document.getElementById('cs-pct').textContent = Math.round(pct) + '%';
+
+  showTyping();
+  const res = await fetch('/api/cold-start/chat', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ message: text, history })
+  });
+  const data = await res.json();
+  removeTyping();
+
+  history.push({ role: 'assistant', content: data.reply });
+  appendMsg('ai', data.reply);
+
+  if (data.complete) {
+    setTimeout(() => {
+      document.getElementById('cs-progress-bar').style.width = '100%';
+      document.getElementById('cs-pct').textContent = '100%';
+      setTimeout(() => {
+        document.getElementById('chat-screen').style.display = 'none';
+        document.getElementById('complete-screen').style.display = 'block';
+      }, 800);
+    }, 1200);
+  }
+}
+
+function appendMsg(role, text) {
+  const wrap = document.getElementById('cs-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + (role === 'ai' ? 'ai' : 'user');
+  div.innerHTML = `
+    <div class="msg-avatar ${role === 'ai' ? 'ai' : 'user-av'}">${role === 'ai' ? 'G' : 'U'}</div>
+    <div class="msg-bubble">${text.replace(/\n/g,'<br>')}</div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function showTyping() {
+  const wrap = document.getElementById('cs-messages');
+  const div = document.createElement('div');
+  div.className = 'msg ai'; div.id = 'typing-indicator';
+  div.innerHTML = `<div class="msg-avatar ai">G</div><div class="typing"><span></span><span></span><span></span></div>`;
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function removeTyping() {
+  const t = document.getElementById('typing-indicator');
+  if (t) t.remove();
+}
+
+function csKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCsMessage(); }
+}
+</script>
+</body>
+</html>

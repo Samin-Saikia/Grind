@@ -1,150 +1,172 @@
+from extensions import db
 from datetime import datetime
-from typing import Optional
-from flask_login import UserMixin
-from extensions import db, bcrypt
+import json
 
-
-class User(UserMixin, db.Model):
-    __tablename__ = "users"
-
+class Profile(db.Model):
+    __tablename__ = "profile"
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(64), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(256), nullable=False)
-    bio = db.Column(db.String(300), default="")
-    profile_pic_url = db.Column(db.String(500), default="")
-    domain = db.Column(db.String(100), default="")
-    domain_detail = db.Column(db.String(300), default="")
-    xp = db.Column(db.Integer, default=0)
-    streak = db.Column(db.Integer, default=0)
-    level = db.Column(db.Integer, default=1)
-    onboarded = db.Column(db.Boolean, default=False)
-    user_model_json = db.Column(db.Text, default="{}")
-    last_active = db.Column(db.DateTime, default=datetime.utcnow)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Core identity (AI-inferred, never user-filled)
+    inferred_interests = db.Column(db.Text, default="[]")
+    communication_style = db.Column(db.Text, default="")
+    vocabulary_level = db.Column(db.String(20), default="unknown")
+    learning_style = db.Column(db.Text, default="")
+    # Strengths and gaps (JSON arrays)
+    strengths = db.Column(db.Text, default="[]")
+    weaknesses = db.Column(db.Text, default="[]")
+    domains = db.Column(db.Text, default="[]")
+    # Behavioral patterns
+    avg_session_minutes = db.Column(db.Float, default=0)
+    peak_hours = db.Column(db.Text, default="[]")
+    skip_patterns = db.Column(db.Text, default="[]")
+    # AI's running notes on you
+    ai_observations = db.Column(db.Text, default="")
+    # Total XP and level
+    total_xp = db.Column(db.Integer, default=0)
+    global_level = db.Column(db.Integer, default=1)
+    # Streaks
+    day_streak = db.Column(db.Integer, default=0)
+    quality_streak = db.Column(db.Integer, default=0)
+    last_active_date = db.Column(db.String(20), default="")
+    # Cold start done?
+    cold_start_complete = db.Column(db.Boolean, default=False)
 
-    tasks = db.relationship("Task", backref="user", lazy=True, cascade="all, delete-orphan")
-    xp_logs = db.relationship("XPLog", backref="user", lazy=True, cascade="all, delete-orphan")
-    posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
+    def get_interests(self):
+        try: return json.loads(self.inferred_interests)
+        except: return []
 
-    def set_password(self, password):
-        self.password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+    def get_strengths(self):
+        try: return json.loads(self.strengths)
+        except: return []
 
-    def check_password(self, password):
-        return bcrypt.check_password_hash(self.password_hash, password)
+    def get_weaknesses(self):
+        try: return json.loads(self.weaknesses)
+        except: return []
 
-    def level_from_xp(self):
-        # Every 500 XP = 1 level
-        return max(1, self.xp // 500 + 1)
+    def get_domains(self):
+        try: return json.loads(self.domains)
+        except: return []
 
-    def xp_to_next_level(self):
-        next_level_xp = self.level_from_xp() * 500
-        return next_level_xp - self.xp
+    def to_dict(self):
+        return {
+            "interests": self.get_interests(),
+            "communication_style": self.communication_style,
+            "vocabulary_level": self.vocabulary_level,
+            "learning_style": self.learning_style,
+            "strengths": self.get_strengths(),
+            "weaknesses": self.get_weaknesses(),
+            "domains": self.get_domains(),
+            "avg_session_minutes": self.avg_session_minutes,
+            "peak_hours": json.loads(self.peak_hours) if self.peak_hours else [],
+            "skip_patterns": json.loads(self.skip_patterns) if self.skip_patterns else [],
+            "ai_observations": self.ai_observations,
+            "total_xp": self.total_xp,
+            "global_level": self.global_level,
+            "day_streak": self.day_streak,
+            "quality_streak": self.quality_streak,
+        }
 
-    def xp_progress_percent(self):
-        current_level_start = (self.level_from_xp() - 1) * 500
-        current_level_end = self.level_from_xp() * 500
-        progress = self.xp - current_level_start
-        total = current_level_end - current_level_start
-        if total == 0:
-            return 0
-        return int((progress / total) * 100)
 
-    def __repr__(self):
-        return "<User {}>".format(self.username)
+class Session(db.Model):
+    __tablename__ = "sessions"
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    ended_at = db.Column(db.DateTime, nullable=True)
+    duration_minutes = db.Column(db.Float, default=0)
+    xp_earned = db.Column(db.Integer, default=0)
+    quality_score = db.Column(db.Float, default=0)  # 0-10
+    session_type = db.Column(db.String(30), default="normal")  # cold_start, normal, deep_dive
+    tasks = db.relationship("Task", backref="session", lazy=True)
+    messages = db.relationship("Message", backref="session", lazy=True)
+    # AI's end-of-session hook (the open loop)
+    closing_hook = db.Column(db.Text, default="")
+    # Weekly report flag
+    is_weekly_report = db.Column(db.Boolean, default=False)
 
 
 class Task(db.Model):
     __tablename__ = "tasks"
-
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    title = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text, nullable=False)
-    domain = db.Column(db.String(100), default="")
-    difficulty = db.Column(db.String(20), default="medium")  # easy / medium / hard
-    xp_value = db.Column(db.Integer, default=100)
-    time_estimate = db.Column(db.Integer, default=30)  # minutes
-    status = db.Column(db.String(20), default="pending")  # pending / done / skipped / quit
-    completion_note = db.Column(db.Text, default="")
+    session_id = db.Column(db.Integer, db.ForeignKey("sessions.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime, nullable=True)
-
-    def __repr__(self):
-        return "<Task {}>".format(self.title)
-
-
-class XPLog(db.Model):
-    __tablename__ = "xp_log"
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    delta = db.Column(db.Integer, nullable=False)  # positive or negative
-    reason = db.Column(db.String(200), nullable=False)
-    task_id = db.Column(db.Integer, nullable=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def __repr__(self):
-        return "<XPLog {} {}>".format(self.delta, self.reason)
-
-
-class Post(db.Model):
-    __tablename__ = "posts"
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    content = db.Column(db.String(500), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def __repr__(self):
-        return "<Post {}>".format(self.id)
-
-
-class InspireList(db.Model):
-    __tablename__ = "inspire_list"
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    target_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-
-class Guild(db.Model):
-    __tablename__ = "guilds"
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), unique=True, nullable=False)
-    description = db.Column(db.String(500), default="")
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, default="")
+    task_type = db.Column(db.String(20), default="learn")  # learn, build, research, reflect
+    difficulty = db.Column(db.Integer, default=5)  # 1-10
+    time_limit_minutes = db.Column(db.Integer, default=30)
+    status = db.Column(db.String(20), default="pending")  # pending, in_progress, done, skipped
+    xp_value = db.Column(db.Integer, default=10)
+    # Domain this task belongs to
     domain = db.Column(db.String(100), default="")
-    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    xp_pool = db.Column(db.Integer, default=0)
-    is_public = db.Column(db.Boolean, default=True)
+    # Debrief
+    debrief_questions = db.Column(db.Text, default="[]")
+    debrief_answers = db.Column(db.Text, default="[]")
+    debrief_score = db.Column(db.Float, default=0)  # 0-10, AI evaluated
+    ai_feedback = db.Column(db.Text, default="")
+
+    def get_debrief_questions(self):
+        try: return json.loads(self.debrief_questions)
+        except: return []
+
+
+class Message(db.Model):
+    __tablename__ = "messages"
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey("sessions.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    role = db.Column(db.String(10), nullable=False)  # user / assistant
+    content = db.Column(db.Text, nullable=False)
+    message_type = db.Column(db.String(30), default="chat")  # chat, cold_start, debrief, challenge
+
+
+class KnowledgeNode(db.Model):
+    __tablename__ = "knowledge_nodes"
+    id = db.Column(db.Integer, primary_key=True)
+    concept = db.Column(db.String(200), unique=True, nullable=False)
+    domain = db.Column(db.String(100), default="")
+    first_seen = db.Column(db.DateTime, default=datetime.utcnow)
+    last_touched = db.Column(db.DateTime, default=datetime.utcnow)
+    evidence_count = db.Column(db.Integer, default=1)
+    mastery_score = db.Column(db.Float, default=0.1)  # 0-1
+    connections = db.Column(db.Text, default="[]")  # list of concept names
+
+    def get_connections(self):
+        try: return json.loads(self.connections)
+        except: return []
+
+
+class DomainLevel(db.Model):
+    __tablename__ = "domain_levels"
+    id = db.Column(db.Integer, primary_key=True)
+    domain = db.Column(db.String(100), unique=True, nullable=False)
+    level = db.Column(db.Integer, default=1)
+    xp = db.Column(db.Integer, default=0)
+    xp_to_next = db.Column(db.Integer, default=100)
+    tasks_completed = db.Column(db.Integer, default=0)
+    tasks_skipped = db.Column(db.Integer, default=0)
+    avg_difficulty = db.Column(db.Float, default=5.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    members = db.relationship("GuildMember", backref="guild", lazy=True, cascade="all, delete-orphan")
 
-
-class GuildMember(db.Model):
-    __tablename__ = "guild_members"
-
+class Milestone(db.Model):
+    __tablename__ = "milestones"
     id = db.Column(db.Integer, primary_key=True)
-    guild_id = db.Column(db.Integer, db.ForeignKey("guilds.id"), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    role = db.Column(db.String(20), default="member")  # admin / member
-    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-
-class Challenge(db.Model):
-    __tablename__ = "challenges"
-
-    id = db.Column(db.Integer, primary_key=True)
-    challenger_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    challenged_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    guild_id_a = db.Column(db.Integer, db.ForeignKey("guilds.id"), nullable=True)
-    guild_id_b = db.Column(db.Integer, db.ForeignKey("guilds.id"), nullable=True)
-    challenge_type = db.Column(db.String(20), default="1v1")  # 1v1 / guild
-    start_time = db.Column(db.DateTime, nullable=True)
-    end_time = db.Column(db.DateTime, nullable=True)
-    winner_id = db.Column(db.Integer, nullable=True)
-    status = db.Column(db.String(20), default="pending")  # pending / active / completed / declined
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, default="")
+    milestone_type = db.Column(db.String(30), default="breakthrough")
+    domain = db.Column(db.String(100), default="")
+    seen = db.Column(db.Boolean, default=False)
+
+
+class WeeklyReport(db.Model):
+    __tablename__ = "weekly_reports"
+    id = db.Column(db.Integer, primary_key=True)
+    week_start = db.Column(db.String(20), nullable=False)
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    content = db.Column(db.Text, default="")
+    xp_gained = db.Column(db.Integer, default=0)
+    tasks_completed = db.Column(db.Integer, default=0)
+    new_concepts = db.Column(db.Integer, default=0)

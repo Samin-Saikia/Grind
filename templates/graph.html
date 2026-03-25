@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %} — Knowledge Graph{% endblock %}
+
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Knowledge Graph</div>
+    <div class="page-sub">// concepts you've encountered · brighter = more mastery</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span style="font-size:12px;color:var(--text3);font-family:var(--mono);" id="node-count">— nodes</span>
+    <select id="domain-filter" class="btn btn-ghost btn-sm" onchange="filterDomain(this.value)" style="padding:5px 10px;">
+      <option value="all">All domains</option>
+    </select>
+  </div>
+</div>
+
+<div class="page-body" style="padding:0;">
+  <div id="graph-wrap" style="position:relative;width:100%;height:calc(100vh - 110px);background:var(--bg);">
+    <svg id="graph-svg" style="width:100%;height:100%;"></svg>
+
+    <!-- Node detail panel -->
+    <div id="node-panel" style="display:none;position:absolute;right:24px;top:24px;width:260px;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:20px;">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--accent);letter-spacing:2px;margin-bottom:8px;">CONCEPT</div>
+      <div id="np-title" style="font-size:16px;font-weight:700;margin-bottom:12px;"></div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-size:12px;color:var(--text3);">Domain</span>
+          <span style="font-size:12px;color:var(--text2);" id="np-domain"></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-size:12px;color:var(--text3);">Mastery</span>
+          <span style="font-size:12px;color:var(--accent);font-family:var(--mono);" id="np-mastery"></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="font-size:12px;color:var(--text3);">Evidence</span>
+          <span style="font-size:12px;color:var(--text2);font-family:var(--mono);" id="np-evidence"></span>
+        </div>
+      </div>
+      <div class="xp-bar-track"><div class="xp-bar-fill" id="np-bar" style="width:0%;background:var(--teal);"></div></div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:14px;width:100%;" onclick="deepDiveFromNode()">Deep dive this</button>
+    </div>
+
+    <!-- Empty state -->
+    <div id="graph-empty" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:12px;">
+      <div style="font-size:14px;color:var(--text3);">No knowledge nodes yet</div>
+      <div style="font-size:12px;color:var(--text3);font-family:var(--mono);">Complete tasks and debriefs to build your graph</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allNodes = [], allEdges = [], selectedNode = null;
+let simulation, svg, g;
+
+async function loadGraph() {
+  const res = await fetch('/api/graph');
+  const data = await res.json();
+  allNodes = data.nodes || [];
+  allEdges = data.edges || [];
+
+  document.getElementById('node-count').textContent = `${allNodes.length} nodes`;
+
+  if (allNodes.length === 0) {
+    document.getElementById('graph-empty').style.display = 'flex';
+    return;
+  }
+
+  // Populate domain filter
+  const domains = [...new Set(allNodes.map(n => n.domain).filter(Boolean))];
+  const sel = document.getElementById('domain-filter');
+  domains.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = d;
+    sel.appendChild(opt);
+  });
+
+  renderGraph(allNodes, allEdges);
+}
+
+function domainColor(domain) {
+  const colors = ['#4a9eff','#9b4aff','#4affd4','#e8ff4a','#ff944a','#ff4a9b','#4affa0'];
+  if (!domain) return '#5a5550';
+  let hash = 0;
+  for (let c of domain) hash = (hash * 31 + c.charCodeAt(0)) % colors.length;
+  return colors[hash];
+}
+
+function renderGraph(nodes, edges) {
+  const wrap = document.getElementById('graph-wrap');
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+
+  d3.select('#graph-svg').selectAll('*').remove();
+
+  svg = d3.select('#graph-svg');
+  const zoom = d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform));
+  svg.call(zoom);
+
+  g = svg.append('g');
+
+  // Links
+  const link = g.append('g').selectAll('line')
+    .data(edges).join('line')
+    .attr('stroke', '#2a2a2a')
+    .attr('stroke-width', 1);
+
+  // Nodes
+  const node = g.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .attr('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }))
+    .on('click', (e, d) => { e.stopPropagation(); showNodePanel(d); });
+
+  node.append('circle')
+    .attr('r', d => 6 + d.mastery * 14)
+    .attr('fill', d => domainColor(d.domain))
+    .attr('fill-opacity', d => 0.2 + d.mastery * 0.6)
+    .attr('stroke', d => domainColor(d.domain))
+    .attr('stroke-width', 1.5)
+    .attr('stroke-opacity', d => 0.5 + d.mastery * 0.5);
+
+  node.append('text')
+    .text(d => d.label.length > 16 ? d.label.slice(0,14)+'…' : d.label)
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => 10 + d.mastery * 14 + 4)
+    .attr('font-family', 'Space Mono, monospace')
+    .attr('font-size', '9px')
+    .attr('fill', '#9a9590')
+    .attr('pointer-events', 'none');
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d => d.id).distance(80))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(d => 12 + d.mastery * 16))
+    .on('tick', () => {
+      link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+  svg.on('click', () => hideNodePanel());
+}
+
+function filterDomain(domain) {
+  if (domain === 'all') { renderGraph(allNodes, allEdges); return; }
+  const filteredNodes = allNodes.filter(n => n.domain === domain);
+  const nodeIds = new Set(filteredNodes.map(n => n.id));
+  const filteredEdges = allEdges.filter(e => nodeIds.has(e.source.id || e.source) && nodeIds.has(e.target.id || e.target));
+  renderGraph(filteredNodes, filteredEdges);
+}
+
+function showNodePanel(node) {
+  selectedNode = node;
+  document.getElementById('np-title').textContent = node.label;
+  document.getElementById('np-domain').textContent = node.domain || '—';
+  document.getElementById('np-mastery').textContent = (node.mastery * 100).toFixed(0) + '%';
+  document.getElementById('np-evidence').textContent = node.evidence + ' sessions';
+  document.getElementById('np-bar').style.width = (node.mastery * 100) + '%';
+  document.getElementById('node-panel').style.display = 'block';
+}
+
+function hideNodePanel() {
+  document.getElementById('node-panel').style.display = 'none';
+  selectedNode = null;
+}
+
+function deepDiveFromNode() {
+  if (!selectedNode) return;
+  window.location.href = `/chat?dive=${encodeURIComponent(selectedNode.label)}`;
+}
+
+document.addEventListener('DOMContentLoaded', loadGraph);
+</script>
+{% endblock %}

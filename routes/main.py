@@ -1,207 +1,342 @@
+from flask import Blueprint, render_template, jsonify, request, session
+from extensions import db
+from models.models import Session as GrindSession, Task, Message, Milestone, WeeklyReport, KnowledgeNode
+from services.profile import get_or_create_profile, update_streak, get_knowledge_graph_data
+from services import ai as ai_service
+from services import serper as serper_service
 import json
 from datetime import datetime
-from flask import Blueprint, render_template, redirect, url_for, request, flash, jsonify
-from flask_login import login_required, current_user
-from extensions import db
-from models.models import Task, XPLog, User
-from services.ai_service import generate_tasks, update_user_model
-from services.xp_service import complete_task_xp, skip_task_xp, quit_task_xp, update_streak
 
 main_bp = Blueprint("main", __name__)
 
 
 @main_bp.route("/")
 def index():
-    if current_user.is_authenticated:
-        return redirect(url_for("main.dashboard"))
-    return render_template("index.html")
+    profile = get_or_create_profile()
+    update_streak(profile)
+    if not profile.cold_start_complete:
+        return render_template("cold_start.html")
+    return render_template("dashboard.html")
 
 
 @main_bp.route("/dashboard")
-@login_required
 def dashboard():
-    pending_tasks = Task.query.filter_by(
-        user_id=current_user.id, status="pending"
-    ).order_by(Task.created_at.desc()).all()
-
-    completed_today = Task.query.filter(
-        Task.user_id == current_user.id,
-        Task.status == "done",
-        Task.completed_at >= datetime.utcnow().replace(hour=0, minute=0, second=0),
-    ).count()
-
-    recent_xp = XPLog.query.filter_by(user_id=current_user.id)\
-        .order_by(XPLog.timestamp.desc()).limit(5).all()
-
-    user_model = {}
-    try:
-        user_model = json.loads(current_user.user_model_json or "{}")
-    except (ValueError, KeyError):
-        pass
-
-    return render_template(
-        "dashboard.html",
-        pending_tasks=pending_tasks,
-        completed_today=completed_today,
-        recent_xp=recent_xp,
-        user_model=user_model,
-    )
+    profile = get_or_create_profile()
+    if not profile.cold_start_complete:
+        return render_template("cold_start.html")
+    return render_template("dashboard.html")
 
 
-@main_bp.route("/tasks/complete/<int:task_id>", methods=["POST"])
-@login_required
-def complete_task(task_id):
-    task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
-
-    if task.status != "pending":
-        flash("This task is already resolved.", "error")
-        return redirect(url_for("main.dashboard"))
-
-    note = request.form.get("note", "").strip()
-    if not note:
-        flash("Write a short completion note before marking done.", "error")
-        return redirect(url_for("main.dashboard"))
-
-    task.status = "done"
-    task.completion_note = note
-    task.completed_at = datetime.utcnow()
-
-    xp, reason = complete_task_xp(current_user, task)
-    streak_bonus = update_streak(current_user)
-
-    db.session.commit()
-    _maybe_refresh_tasks()
-
-    msg = "+{} XP — {}".format(xp, reason)
-    if streak_bonus:
-        msg += " | Streak bonus!"
-    flash(msg, "success")
-    return redirect(url_for("main.dashboard"))
+@main_bp.route("/grind")
+def grind():
+    profile = get_or_create_profile()
+    if not profile.cold_start_complete:
+        return render_template("cold_start.html")
+    return render_template("grind.html")
 
 
-@main_bp.route("/tasks/skip/<int:task_id>", methods=["POST"])
-@login_required
-def skip_task(task_id):
-    task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
-
-    if task.status != "pending":
-        flash("Task already resolved.", "error")
-        return redirect(url_for("main.dashboard"))
-
-    task.status = "skipped"
-    task.completed_at = datetime.utcnow()
-    xp, reason = skip_task_xp(current_user, task)
-    db.session.commit()
-
-    flash("{} XP — {}".format(xp, reason), "warning")
-    return redirect(url_for("main.dashboard"))
+@main_bp.route("/chat")
+def chat():
+    profile = get_or_create_profile()
+    if not profile.cold_start_complete:
+        return render_template("cold_start.html")
+    return render_template("chat.html")
 
 
-@main_bp.route("/tasks/quit/<int:task_id>", methods=["POST"])
-@login_required
-def quit_task(task_id):
-    task = Task.query.filter_by(id=task_id, user_id=current_user.id).first_or_404()
-
-    if task.status != "pending":
-        flash("Task already resolved.", "error")
-        return redirect(url_for("main.dashboard"))
-
-    task.status = "quit"
-    task.completed_at = datetime.utcnow()
-    xp, reason = quit_task_xp(current_user, task)
-    db.session.commit()
-
-    flash("{} XP — {}".format(xp, reason), "error")
-    return redirect(url_for("main.dashboard"))
-
-
-@main_bp.route("/tasks/generate", methods=["POST"])
-@login_required
-def generate_new_tasks():
-    """Manually trigger new task generation."""
-    pending_count = Task.query.filter_by(
-        user_id=current_user.id, status="pending"
-    ).count()
-
-    if pending_count >= 3:
-        flash("You still have {} pending tasks. Finish those first.".format(pending_count), "warning")
-        return redirect(url_for("main.dashboard"))
-
-    _generate_fresh_tasks()
-    flash("New tasks generated based on your updated profile.", "success")
-    return redirect(url_for("main.dashboard"))
-
-
-def _maybe_refresh_tasks():
-    """Auto-generate new tasks if user has fewer than 2 pending."""
-    pending_count = Task.query.filter_by(
-        user_id=current_user.id, status="pending"
-    ).count()
-    if pending_count < 2:
-        _generate_fresh_tasks()
-
-
-def _generate_fresh_tasks():
-    """Generate new tasks using current user model, update model from history first."""
-    # Pull last 10 tasks for context
-    recent = Task.query.filter_by(user_id=current_user.id)\
-        .order_by(Task.created_at.desc()).limit(10).all()
-
-    history = [
-        {"title": t.title, "status": t.status, "difficulty": t.difficulty}
-        for t in recent
-    ]
-
-    try:
-        user_model = json.loads(current_user.user_model_json or "{}")
-    except (ValueError, KeyError):
-        user_model = {}
-
-    if history:
-        user_model = update_user_model(current_user.domain, user_model, history)
-        current_user.user_model_json = json.dumps(user_model)
-
-    tasks_data = generate_tasks(current_user.domain, user_model)
-    for t in tasks_data:
-        task = Task(
-            user_id=current_user.id,
-            title=t.get("title", "Task"),
-            description=t.get("description", ""),
-            domain=current_user.domain,
-            difficulty=t.get("difficulty", "medium"),
-            xp_value=int(t.get("xp_value", 100)),
-            time_estimate=int(t.get("time_estimate_minutes", 30)),
-            status="pending",
-        )
-        db.session.add(task)
-
-    db.session.commit()
+@main_bp.route("/graph")
+def graph():
+    profile = get_or_create_profile()
+    if not profile.cold_start_complete:
+        return render_template("cold_start.html")
+    return render_template("graph.html")
 
 
 @main_bp.route("/profile")
-@login_required
-def profile():
-    all_tasks = Task.query.filter_by(user_id=current_user.id)\
-        .order_by(Task.created_at.desc()).limit(20).all()
-    xp_history = XPLog.query.filter_by(user_id=current_user.id)\
-        .order_by(XPLog.timestamp.desc()).limit(20).all()
-
-    stats = {
-        "total_done": Task.query.filter_by(user_id=current_user.id, status="done").count(),
-        "total_skipped": Task.query.filter_by(user_id=current_user.id, status="skipped").count(),
-        "total_quit": Task.query.filter_by(user_id=current_user.id, status="quit").count(),
-    }
-
-    return render_template("profile.html", all_tasks=all_tasks, xp_history=xp_history, stats=stats)
+def profile_page():
+    return render_template("profile.html")
 
 
-@main_bp.route("/profile/edit", methods=["GET", "POST"])
-@login_required
-def edit_profile():
-    if request.method == "POST":
-        bio = request.form.get("bio", "").strip()[:300]
-        current_user.bio = bio
+# ── API: Profile ──────────────────────────────────────────
+@main_bp.route("/api/profile")
+def api_profile():
+    profile = get_or_create_profile()
+    from models.models import DomainLevel
+    domains = DomainLevel.query.all()
+    milestones = Milestone.query.filter_by(seen=False).order_by(Milestone.created_at.desc()).limit(5).all()
+    return jsonify({
+        "profile": profile.to_dict(),
+        "cold_start_complete": profile.cold_start_complete,
+        "domains": [{"domain": d.domain, "level": d.level, "xp": d.xp, "xp_to_next": d.xp_to_next, "tasks_completed": d.tasks_completed} for d in domains],
+        "milestones": [{"id": m.id, "title": m.title, "description": m.description, "type": m.milestone_type, "domain": m.domain} for m in milestones],
+    })
+
+
+@main_bp.route("/api/milestones/seen", methods=["POST"])
+def mark_milestones_seen():
+    Milestone.query.filter_by(seen=False).update({"seen": True})
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# ── API: Cold Start ───────────────────────────────────────
+@main_bp.route("/api/cold-start/chat", methods=["POST"])
+def cold_start_chat():
+    data = request.json
+    user_msg = data.get("message", "").strip()
+    history = data.get("history", [])
+
+    profile = get_or_create_profile()
+    profile_ctx = ai_service.build_profile_context(profile)
+
+    history.append({"role": "user", "content": user_msg})
+    reply = ai_service.cold_start_response(history, profile_ctx)
+    history.append({"role": "assistant", "content": reply})
+
+    # After 8+ exchanges, extract and save profile
+    user_turns = sum(1 for m in history if m["role"] == "user")
+    complete = False
+    if user_turns >= 6:
+        extracted = ai_service.extract_profile_from_conversation(history)
+        from services.profile import merge_profile_from_cold_start
+        merge_profile_from_cold_start(profile, extracted)
+        complete = True
+        # Save cold start as a session
+        gs = GrindSession(session_type="cold_start")
+        db.session.add(gs)
         db.session.commit()
-        flash("Profile updated.", "success")
-        return redirect(url_for("main.profile"))
-    return render_template("edit_profile.html")
+        for m in history:
+            msg = Message(session_id=gs.id, role=m["role"], content=m["content"], message_type="cold_start")
+            db.session.add(msg)
+        db.session.commit()
+
+    return jsonify({"reply": reply, "complete": complete, "turns": user_turns})
+
+
+# ── API: Tasks ────────────────────────────────────────────
+@main_bp.route("/api/tasks/generate", methods=["POST"])
+def generate_tasks():
+    profile = get_or_create_profile()
+    from models.models import DomainLevel
+    domain_levels = DomainLevel.query.all()
+
+    # Live research
+    domains = profile.get_domains()
+    serper_ctx = serper_service.research_for_tasks(domains, profile.communication_style)
+
+    tasks_data = ai_service.generate_tasks(profile, domain_levels, serper_ctx)
+
+    # Create a new session
+    gs = GrindSession(session_type="normal")
+    db.session.add(gs)
+    db.session.commit()
+
+    created_tasks = []
+    for t in tasks_data:
+        task = Task(
+            session_id=gs.id,
+            title=t.get("title", "Task"),
+            description=t.get("description", ""),
+            task_type=t.get("task_type", "learn"),
+            difficulty=t.get("difficulty", 5),
+            time_limit_minutes=t.get("time_limit_minutes", 30),
+            domain=t.get("domain", "general"),
+            xp_value=t.get("xp_value", 40),
+        )
+        db.session.add(task)
+        db.session.flush()
+        created_tasks.append({
+            "id": task.id,
+            "title": task.title,
+            "description": task.description,
+            "task_type": task.task_type,
+            "difficulty": task.difficulty,
+            "time_limit_minutes": task.time_limit_minutes,
+            "domain": task.domain,
+            "xp_value": task.xp_value,
+            "status": task.status,
+        })
+    db.session.commit()
+    return jsonify({"session_id": gs.id, "tasks": created_tasks})
+
+
+@main_bp.route("/api/tasks/current")
+def current_tasks():
+    gs = GrindSession.query.filter_by(session_type="normal").order_by(GrindSession.created_at.desc()).first()
+    if not gs:
+        return jsonify({"tasks": [], "session_id": None})
+    tasks = Task.query.filter_by(session_id=gs.id).all()
+    return jsonify({
+        "session_id": gs.id,
+        "tasks": [{
+            "id": t.id, "title": t.title, "description": t.description,
+            "task_type": t.task_type, "difficulty": t.difficulty,
+            "time_limit_minutes": t.time_limit_minutes, "domain": t.domain,
+            "xp_value": t.xp_value, "status": t.status,
+            "debrief_questions": t.get_debrief_questions(),
+            "ai_feedback": t.ai_feedback,
+        } for t in tasks]
+    })
+
+
+@main_bp.route("/api/tasks/<int:task_id>/start", methods=["POST"])
+def start_task(task_id):
+    task = Task.query.get_or_404(task_id)
+    task.status = "in_progress"
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@main_bp.route("/api/tasks/<int:task_id>/skip", methods=["POST"])
+def skip_task(task_id):
+    task = Task.query.get_or_404(task_id)
+    task.status = "skipped"
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@main_bp.route("/api/tasks/<int:task_id>/debrief/start", methods=["POST"])
+def start_debrief(task_id):
+    task = Task.query.get_or_404(task_id)
+    if not task.get_debrief_questions():
+        questions = ai_service.generate_debrief_questions(task)
+        task.debrief_questions = json.dumps(questions)
+        db.session.commit()
+    return jsonify({"questions": task.get_debrief_questions()})
+
+
+@main_bp.route("/api/tasks/<int:task_id>/debrief/submit", methods=["POST"])
+def submit_debrief(task_id):
+    task = Task.query.get_or_404(task_id)
+    data = request.json
+    answers = data.get("answers", [])
+    questions = task.get_debrief_questions()
+
+    profile = get_or_create_profile()
+    eval_data = ai_service.evaluate_debrief(task, questions, answers, profile)
+
+    score = eval_data.get("score", 5)
+    multiplier = eval_data.get("xp_multiplier", 1.0)
+    xp_earned = int(task.xp_value * multiplier)
+
+    task.debrief_answers = json.dumps(answers)
+    task.debrief_score = score
+    task.ai_feedback = eval_data.get("feedback", "")
+    task.status = "done"
+    task.completed_at = datetime.utcnow()
+    db.session.commit()
+
+    from services.profile import apply_debrief_results, add_xp, ensure_domain
+    ensure_domain(task.domain)
+    apply_debrief_results(profile, task, eval_data)
+    add_xp(profile, task.domain, xp_earned)
+
+    # Check for milestone
+    from models.models import Task as TaskModel
+    historical = [t.debrief_score for t in TaskModel.query.filter(
+        TaskModel.domain == task.domain,
+        TaskModel.debrief_score > 0
+    ).order_by(TaskModel.completed_at).all()]
+
+    milestone_text = ai_service.detect_milestone(profile, task, score, historical)
+    if milestone_text:
+        m = Milestone(title="Breakthrough", description=milestone_text, domain=task.domain)
+        db.session.add(m)
+        db.session.commit()
+
+    # Quality streak update
+    if score >= 7:
+        profile.quality_streak += 1
+    else:
+        profile.quality_streak = 0
+    db.session.commit()
+
+    return jsonify({
+        "score": score,
+        "feedback": eval_data.get("feedback", ""),
+        "xp_earned": xp_earned,
+        "milestone": milestone_text,
+        "new_strengths": eval_data.get("new_strengths", []),
+        "new_weaknesses": eval_data.get("new_weaknesses", []),
+    })
+
+
+# ── API: Chat ─────────────────────────────────────────────
+@main_bp.route("/api/chat", methods=["POST"])
+def api_chat():
+    data = request.json
+    user_msg = data.get("message", "").strip()
+    history = data.get("history", [])
+
+    profile = get_or_create_profile()
+    gs = GrindSession.query.filter_by(session_type="normal").order_by(GrindSession.created_at.desc()).first()
+    current_tasks = Task.query.filter_by(session_id=gs.id).all() if gs else []
+
+    history.append({"role": "user", "content": user_msg})
+    reply = ai_service.chat_response(history, profile, current_tasks)
+
+    if gs:
+        db.session.add(Message(session_id=gs.id, role="user", content=user_msg, message_type="chat"))
+        db.session.add(Message(session_id=gs.id, role="assistant", content=reply, message_type="chat"))
+        db.session.commit()
+
+    return jsonify({"reply": reply})
+
+
+# ── API: Deep Dive ────────────────────────────────────────
+@main_bp.route("/api/deep-dive", methods=["POST"])
+def deep_dive():
+    data = request.json
+    topic = data.get("topic", "").strip()
+    if not topic:
+        return jsonify({"error": "No topic provided"}), 400
+
+    profile = get_or_create_profile()
+    serper_ctx = serper_service.research_topic(topic, profile.vocabulary_level)
+    result = ai_service.deep_dive(topic, profile, serper_ctx)
+    return jsonify({"content": result, "topic": topic})
+
+
+# ── API: Session close ────────────────────────────────────
+@main_bp.route("/api/session/<int:session_id>/close", methods=["POST"])
+def close_session(session_id):
+    gs = GrindSession.query.get_or_404(session_id)
+    profile = get_or_create_profile()
+    tasks = Task.query.filter_by(session_id=session_id).all()
+    summary = f"Completed {sum(1 for t in tasks if t.status=='done')}/{len(tasks)} tasks"
+    hook = ai_service.generate_closing_hook(summary, profile)
+    gs.closing_hook = hook
+    gs.ended_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"hook": hook})
+
+
+# ── API: Knowledge Graph ──────────────────────────────────
+@main_bp.route("/api/graph")
+def api_graph():
+    return jsonify(get_knowledge_graph_data())
+
+
+# ── API: Export ───────────────────────────────────────────
+@main_bp.route("/api/export")
+def export_data():
+    profile = get_or_create_profile()
+    from models.models import DomainLevel
+    domains = DomainLevel.query.all()
+    sessions = GrindSession.query.all()
+    tasks = Task.query.all()
+    nodes = KnowledgeNode.query.all()
+
+    export = {
+        "profile": profile.to_dict(),
+        "domains": [{"domain": d.domain, "level": d.level, "xp": d.xp, "tasks_completed": d.tasks_completed} for d in domains],
+        "sessions": [{"id": s.id, "type": s.session_type, "created_at": str(s.created_at), "xp_earned": s.xp_earned} for s in sessions],
+        "tasks": [{"title": t.title, "domain": t.domain, "status": t.status, "score": t.debrief_score, "feedback": t.ai_feedback} for t in tasks],
+        "knowledge_nodes": [{"concept": n.concept, "domain": n.domain, "mastery": n.mastery_score, "evidence": n.evidence_count} for n in nodes],
+    }
+    from flask import Response
+    import json
+    return Response(
+        json.dumps(export, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=grind_export.json"}
+    )

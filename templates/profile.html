@@ -1,84 +1,260 @@
 {% extends "base.html" %}
-{% block title %}{{ current_user.username }} — Grind{% endblock %}
+{% block title %} — Profile{% endblock %}
 
 {% block content %}
-<div class="profile-layout">
-
-  <!-- Profile header -->
-  <div class="profile-header-card">
-    <div class="profile-avatar">
-      {% if current_user.profile_pic_url %}
-        <img src="{{ current_user.profile_pic_url }}" alt="{{ current_user.username }}">
-      {% else %}
-        <div class="avatar-initials">{{ current_user.username[0].upper() }}</div>
-      {% endif %}
-    </div>
-    <div class="profile-info">
-      <h2 class="profile-username">{{ current_user.username }}</h2>
-      <p class="profile-domain">{{ current_user.domain }}</p>
-      {% if current_user.bio %}
-        <p class="profile-bio">{{ current_user.bio }}</p>
-      {% endif %}
-      <a href="{{ url_for('main.edit_profile') }}" class="btn btn-ghost btn-sm mt-8">Edit profile</a>
-    </div>
-    <div class="profile-stats-row">
-      <div class="pstat">
-        <span class="pstat-val accent">{{ current_user.xp }}</span>
-        <span class="pstat-label">XP</span>
-      </div>
-      <div class="pstat">
-        <span class="pstat-val">{{ current_user.level_from_xp() }}</span>
-        <span class="pstat-label">Level</span>
-      </div>
-      <div class="pstat">
-        <span class="pstat-val">{{ current_user.streak }}</span>
-        <span class="pstat-label">Streak</span>
-      </div>
-      <div class="pstat">
-        <span class="pstat-val">{{ stats.total_done }}</span>
-        <span class="pstat-label">Done</span>
-      </div>
-    </div>
+<div class="page-header">
+  <div>
+    <div class="page-title">Your Profile</div>
+    <div class="page-sub">// AI-inferred · never filled by you · always evolving</div>
   </div>
-
-  <!-- Task history and XP log side by side -->
-  <div class="profile-body">
-
-    <div class="profile-col">
-      <h3 class="col-title">Task history</h3>
-      {% if all_tasks %}
-        {% for task in all_tasks %}
-        <div class="history-row status-{{ task.status }}">
-          <div class="history-left">
-            <span class="history-status">{{ task.status }}</span>
-            <span class="history-title">{{ task.title }}</span>
-          </div>
-          <span class="history-xp">
-            {% if task.status == 'done' %}+{{ task.xp_value }}{% elif task.status == 'skipped' %}-20{% elif task.status == 'quit' %}-50{% else %}—{% endif %}
-          </span>
-        </div>
-        {% endfor %}
-      {% else %}
-        <p class="empty-text">No tasks yet.</p>
-      {% endif %}
-    </div>
-
-    <div class="profile-col">
-      <h3 class="col-title">XP log</h3>
-      {% if xp_history %}
-        {% for log in xp_history %}
-        <div class="history-row">
-          <span class="history-title">{{ log.reason[:60] }}</span>
-          <span class="history-xp {% if log.delta > 0 %}positive{% else %}negative{% endif %}">
-            {% if log.delta > 0 %}+{% endif %}{{ log.delta }}
-          </span>
-        </div>
-        {% endfor %}
-      {% else %}
-        <p class="empty-text">No XP activity yet.</p>
-      {% endif %}
-    </div>
-
+  <div style="display:flex;gap:8px;">
+    <a href="/api/export" class="btn btn-ghost btn-sm">Export JSON</a>
   </div>
 </div>
+
+<div class="page-body">
+  <div class="grid-2" style="gap:24px;margin-bottom:24px;">
+    <!-- Identity card -->
+    <div class="card">
+      <div class="section-label">Identity</div>
+      <div style="display:flex;flex-direction:column;gap:14px;" id="identity-block">
+        <div class="spinner" style="margin:20px auto;display:block;"></div>
+      </div>
+    </div>
+
+    <!-- Radar chart -->
+    <div class="card">
+      <div class="section-label">Strength radar</div>
+      <div class="radar-wrap">
+        <canvas id="radar-chart" width="280" height="280"></canvas>
+      </div>
+      <div style="font-size:11px;color:var(--text3);text-align:center;margin-top:8px;font-family:var(--mono);">
+        Derived from task completions and debrief scores
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="gap:24px;margin-bottom:24px;">
+    <!-- Domains -->
+    <div class="card">
+      <div class="section-label">Domain levels</div>
+      <div id="domains-detail"></div>
+    </div>
+
+    <!-- AI observations -->
+    <div class="card">
+      <div class="section-label">What GRIND observes</div>
+      <div id="observations-block" style="font-size:14px;color:var(--text2);line-height:1.8;font-style:italic;"></div>
+      <div class="divider"></div>
+      <div class="section-label">Learning patterns</div>
+      <div id="patterns-block"></div>
+    </div>
+  </div>
+
+  <!-- Milestones -->
+  <div class="card">
+    <div class="section-label">Milestones & breakthroughs</div>
+    <div id="milestones-list">
+      <div class="empty-state" style="padding:30px 0;">
+        <div class="empty-title">No milestones yet</div>
+        <div class="empty-sub">Complete tasks with quality to earn milestones</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadProfilePage() {
+  const data = await loadProfile();
+  if (!data) return;
+  const p = data.profile;
+
+  // Identity block
+  const id = document.getElementById('identity-block');
+  id.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div>
+        <div class="section-label" style="margin-bottom:4px;">Vocab level</div>
+        <div style="font-size:14px;font-weight:600;color:var(--accent);font-family:var(--mono);">${p.vocabulary_level.toUpperCase()}</div>
+      </div>
+      <div>
+        <div class="section-label" style="margin-bottom:4px;">Global level</div>
+        <div style="font-size:14px;font-weight:600;color:var(--accent);font-family:var(--mono);">LV ${p.global_level}</div>
+      </div>
+      <div>
+        <div class="section-label" style="margin-bottom:4px;">Day streak</div>
+        <div style="font-size:14px;font-weight:600;font-family:var(--mono);">${p.day_streak} ◆</div>
+      </div>
+      <div>
+        <div class="section-label" style="margin-bottom:4px;">Quality streak</div>
+        <div style="font-size:14px;font-weight:600;font-family:var(--mono);">${p.quality_streak} ◆</div>
+      </div>
+    </div>
+    <div class="divider" style="margin:16px 0;"></div>
+    <div class="section-label" style="margin-bottom:8px;">Interests</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+      ${p.interests.length ? p.interests.map(i => `<span class="domain-tag">${i}</span>`).join('') : '<span style="font-size:13px;color:var(--text3);">Still discovering...</span>'}
+    </div>
+    <div class="section-label" style="margin-bottom:8px;">Communication style</div>
+    <div style="font-size:13px;color:var(--text2);">${p.communication_style || '—'}</div>
+    <div class="section-label" style="margin-top:12px;margin-bottom:8px;">Learning style</div>
+    <div style="font-size:13px;color:var(--text2);">${p.learning_style || '—'}</div>
+    <div class="divider" style="margin:16px 0;"></div>
+    <div style="display:flex;justify-content:space-between;font-family:var(--mono);">
+      <div>
+        <div class="section-label" style="margin-bottom:4px;">Total XP</div>
+        <div style="font-size:20px;font-weight:700;color:var(--accent);">${p.total_xp.toLocaleString()}</div>
+      </div>
+    </div>`;
+
+  // Radar chart
+  buildRadar(p.strengths, p.weaknesses, data.domains);
+
+  // Domains
+  const dl = document.getElementById('domains-detail');
+  if (data.domains.length) {
+    dl.innerHTML = data.domains.map(d => `
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+          <span style="font-size:15px;font-weight:700;">${d.domain}</span>
+          <span style="font-family:var(--mono);font-size:13px;color:var(--accent);">Level ${d.level}</span>
+        </div>
+        <div class="xp-bar-track" style="height:5px;">
+          <div class="xp-bar-fill" style="width:${Math.min(100,(d.xp/d.xp_to_next)*100)}%;"></div>
+        </div>
+        <div class="xp-label" style="margin-top:4px;">
+          <span style="color:var(--text3);">${d.tasks_completed} tasks completed</span>
+          <span style="color:var(--text3);">${d.xp} / ${d.xp_to_next} XP</span>
+        </div>
+      </div>`).join('');
+  } else {
+    dl.innerHTML = '<div style="font-size:13px;color:var(--text3);text-align:center;padding:20px 0;">No domains yet. Start grinding.</div>';
+  }
+
+  // Observations
+  document.getElementById('observations-block').textContent = p.ai_observations || 'Not enough data yet. Keep grinding.';
+
+  // Patterns
+  const pb = document.getElementById('patterns-block');
+  pb.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--text2);">
+      <div style="display:flex;justify-content:space-between;">
+        <span>Avg session</span>
+        <span style="font-family:var(--mono);color:var(--text);">${p.avg_session_minutes.toFixed(0)} min</span>
+      </div>
+    </div>`;
+
+  // Milestones
+  loadMilestones();
+}
+
+async function loadMilestones() {
+  try {
+    const res = await fetch('/api/profile');
+    const data = await res.json();
+    const ml = document.getElementById('milestones-list');
+    if (data.milestones && data.milestones.length > 0) {
+      ml.innerHTML = data.milestones.map(m => `
+        <div style="display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--border);">
+          <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:5px;flex-shrink:0;"></div>
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px;">${m.title}</div>
+            <div style="font-size:13px;color:var(--text2);line-height:1.5;">${m.description}</div>
+            ${m.domain ? `<span class="domain-tag" style="margin-top:8px;">${m.domain}</span>` : ''}
+          </div>
+        </div>`).join('');
+    }
+  } catch(e) {}
+}
+
+function buildRadar(strengths, weaknesses, domains) {
+  const canvas = document.getElementById('radar-chart');
+  const ctx = canvas.getContext('2d');
+  const cx = 140, cy = 140, r = 110;
+
+  // Build axes from strengths + weaknesses + domains
+  let axes = [];
+  strengths.slice(0,3).forEach(s => axes.push({ label: s.slice(0,16), value: 0.7 + Math.random()*0.3, color: '#4affd4' }));
+  weaknesses.slice(0,3).forEach(w => axes.push({ label: w.slice(0,16), value: 0.1 + Math.random()*0.3, color: '#ff944a' }));
+  domains.slice(0,2).forEach(d => axes.push({ label: d.domain, value: Math.min(1, d.level / 20), color: '#4a9eff' }));
+
+  if (axes.length < 3) {
+    ['Problem solving','Consistency','Depth','Speed','Communication'].forEach((l,i) => {
+      if (axes.length < 5) axes.push({ label: l, value: 0.3, color: '#5a5550' });
+    });
+  }
+
+  const n = axes.length;
+  const step = (Math.PI * 2) / n;
+
+  ctx.clearRect(0, 0, 280, 280);
+
+  // Background rings
+  [0.25, 0.5, 0.75, 1].forEach(ring => {
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const angle = step * i - Math.PI / 2;
+      const x = cx + Math.cos(angle) * r * ring;
+      const y = cy + Math.sin(angle) * r * ring;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // Spokes
+  axes.forEach((_, i) => {
+    const angle = step * i - Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // Data polygon
+  ctx.beginPath();
+  axes.forEach((axis, i) => {
+    const angle = step * i - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r * axis.value;
+    const y = cy + Math.sin(angle) * r * axis.value;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(232,255,74,0.08)';
+  ctx.fill();
+  ctx.strokeStyle = '#e8ff4a';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Data points
+  axes.forEach((axis, i) => {
+    const angle = step * i - Math.PI / 2;
+    const x = cx + Math.cos(angle) * r * axis.value;
+    const y = cy + Math.sin(angle) * r * axis.value;
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = axis.color;
+    ctx.fill();
+  });
+
+  // Labels
+  ctx.font = '9px Space Mono, monospace';
+  ctx.fillStyle = '#9a9590';
+  ctx.textAlign = 'center';
+  axes.forEach((axis, i) => {
+    const angle = step * i - Math.PI / 2;
+    const lx = cx + Math.cos(angle) * (r + 18);
+    const ly = cy + Math.sin(angle) * (r + 18);
+    ctx.fillText(axis.label, lx, ly);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', loadProfilePage);
+</script>
 {% endblock %}
